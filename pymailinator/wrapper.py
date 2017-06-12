@@ -38,30 +38,41 @@ class Message(object):
     """
     _baseURL = 'http://api.mailinator.com/api/email'
 
-    def __init__(self, token, data):
+    def __init__(self, token, data, private_domain=False):
         self.token = token
+        self.private_domain = private_domain
+
         self.id = data['id']
         self.subject = data['subject']
-        self.time = data['time']
         self.to = data['to']
         self.seconds_ago = data['seconds_ago']
-        self.ip = data.get('ip')
 
-        try:
-            self.origfrom = data['origfrom']
-            # Support old Message attributes
-            self.fromshort, self.fromfull = parseaddr(self.origfrom)
-        except KeyError:
-            # Try the old data model
-            self.fromfull = data['fromfull']
+        if private_domain:
+            # Private messages don't have time and full sender info at this point
             self.fromshort = data['from']
-            self.origfrom = formataddr((self.fromshort, self.fromfull))
+            self.time = self.origfrom = self.fromfull = None
+
+        else:
+            self.time = data['time']
+            self.ip = data.get('ip')
+
+            try:
+                self.origfrom = data['origfrom']
+                # Support old Message attributes
+                self.fromshort, self.fromfull = parseaddr(self.origfrom)
+            except KeyError:
+                # Try the old data model
+                self.fromfull = data['fromfull']
+                self.fromshort = data['from']
+                self.origfrom = formataddr((self.fromshort, self.fromfull))
 
         self.headers = {}
         self.body = ""
 
     def get_message(self):
-        query_string = {'token': self.token, 'msgid': self.id}
+        query_string = {'token': self.token,
+                        'msgid': self.id,
+                        'private_domain': json.dumps(self.private_domain)}
         url = self._baseURL + "?" + urlencode(query_string)
         request = get_request(url)
         if request.getcode() == 404:
@@ -72,6 +83,13 @@ class Message(object):
             if data.get('error').lower() is "rate limiter reached":
                 raise RateLimiterReached
         self.headers = data.get('data').get('headers')
+
+        if self.private_domain:
+            # complete sender info for private messages
+            self.fromfull = data['data']['fromfull']
+            self.origfrom = data['data']['origfrom']
+            self.time = data['data']['time']
+
         self.body = "".join([part['body'] for part in data['data']['parts']])
 
 
@@ -96,11 +114,13 @@ class Inbox(object):
     def __init__(self, token):
         self.token = token
         self.messages = []
+        self.private_domain = False
 
     def get(self, mailbox=None, private_domain=False):
         """Retrieves email from inbox"""
         if not self.token:
             raise MissingToken
+        self.private_domain = private_domain
         query_string = {'token': self.token}
         if mailbox:
             query_string.update({'to': mailbox})
@@ -151,7 +171,7 @@ class Inbox(object):
         self.messages = []
         parsed = json.loads(clean_response(data), strict=False)
         for message in parsed['messages']:
-            email = Message(self.token, message)
+            email = Message(self.token, message, private_domain=self.private_domain)
             self.messages.append(email)
         return self.messages
 
