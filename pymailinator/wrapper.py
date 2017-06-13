@@ -116,16 +116,17 @@ class Inbox(object):
         self.messages = []
         self.private_domain = False
 
-    def get(self, mailbox=None, private_domain=False):
+    def get(self, mailbox=None):
         """Retrieves email from inbox"""
         if not self.token:
             raise MissingToken
-        self.private_domain = private_domain
+        public_address = mailbox is None or mailbox.endswith('mailinator.com')
+        self.private_domain = not public_address
         query_string = {'token': self.token}
         if mailbox:
             query_string.update({'to': mailbox})
-        if private_domain:
-            query_string.update({'private_domain': json.dumps(private_domain)})
+        if self.private_domain:
+            query_string.update({'private_domain': json.dumps(self.private_domain)})
         url = self._baseURL + '?' + urlencode(query_string)
         request = get_request(url)
         if request.getcode() == 400:
